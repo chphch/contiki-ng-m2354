@@ -43,7 +43,11 @@
 #define RX_BUF_SIZE	4096
 #define ERROR_BUF_SIZE 100
 
-#define MESSAGE     "Echo this"
+static const char * simulated_data[] = {
+    "0,1,2",
+    "2,3,4",
+};
+static int data_size = sizeof(simulated_data) / sizeof(simulated_data[0]);
 
 static struct udp_socket udp_sock;
 static uint8_t *rx_buf = NULL;
@@ -215,7 +219,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
     static const char *pers = "dtls_client";
 	static int retry_left;
 	static udp_timer_t timer;
-    static unsigned int num_sent = 0;
+    static unsigned int data_index = 0;
     static struct etimer etimer;
 
     static mbedtls_entropy_context entropy;
@@ -356,7 +360,6 @@ PROCESS_THREAD(udp_client_process, ev, data)
                                             timing_get_delay );
     mbedtls_printf( " ok\n" );
 
-handshake:
     /*
      * 4. Handshake
      */
@@ -412,10 +415,10 @@ send_request:
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
-    len = sizeof( MESSAGE ) - 1;
+    strcpy((char *) buf, simulated_data[data_index]);
 
     do {
-		ret = mbedtls_ssl_write( &ssl, (unsigned char *) MESSAGE, len );
+		ret = mbedtls_ssl_write( &ssl, (unsigned char *) buf, strlen((char *) buf) );
         mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
         mbedtls_printf( "Write error: %d - %s, rx_left: %d\n\n", ret, error_buf,
             rx_left );
@@ -432,7 +435,7 @@ send_request:
     }
 
     len = ret;
-    mbedtls_printf( " %d bytes written\n\n%s\n\n", len, MESSAGE );
+    mbedtls_printf( " %d bytes written\n\n%s\n\n", len, buf );
 
     /*
      * 7. Read the echo response
@@ -476,14 +479,16 @@ send_request:
         }
     }
     unsigned long elapsed_secs = clock_seconds() - start_time;
-    mbedtls_printf( " num_sent: %u, time: %lus\n", ++num_sent, elapsed_secs);
+    mbedtls_printf( " data_index: %u, time: %lus\n", data_index++, elapsed_secs);
 
     len = ret;
     mbedtls_printf( " %d bytes read\n\n%s\n\n", len, buf );
 
     etimer_set(&etimer, 1 * CLOCK_SECOND);
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
-    goto send_request;
+
+    if (data_index == data_size) goto close_notify;
+    else goto send_request;
 
     /*
      * 8. Done, cleanly close the connection
@@ -500,7 +505,6 @@ close_notify:
     ret = 0;
 
     mbedtls_printf( " done\n" );
-    goto handshake;
 
     /*
      * 9. Final clean-ups and exit
