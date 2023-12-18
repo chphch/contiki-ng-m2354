@@ -226,11 +226,9 @@ PROCESS_THREAD(udp_client_process, ev, data)
 
     uip_ipaddr_t dest_ipaddr =  {{ 0xFE,0x80,0x00,0x00,0x00, 0x00,0x00,0x00,0x02,0x13,0xA2, 0x00, 0x41, 0xA5, 0x9A, 0x67}};
 
-    static struct etimer etimer;
     static unsigned long start_time;
 
     PROCESS_BEGIN();
-    etimer_set(&etimer, CLOCK_SECOND * 1);
     start_time = clock_seconds();
 
 #if defined(MBEDTLS_DEBUG_C)
@@ -242,9 +240,6 @@ PROCESS_THREAD(udp_client_process, ev, data)
 		LOG_ERR("malloc error\n");
 		goto exit;
 	}
-
-init:
-    retry_left = 5;
 
     /*
      * 0. Initialize the RNG and the session data
@@ -360,6 +355,7 @@ init:
                                             timing_get_delay );
     mbedtls_printf( " ok\n" );
 
+handshake:
     /*
      * 4. Handshake
      */
@@ -368,11 +364,11 @@ init:
 
     do {
 		ret = mbedtls_ssl_handshake( &ssl );
-		if (ret == MBEDTLS_ERR_SSL_WANT_READ) {
-            PROCESS_YIELD_UNTIL(rx_left);
-        }
         mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
-        mbedtls_printf( "Handshake error: %d - %s\n\n", ret, error_buf );
+        mbedtls_printf( "Handshake error: %d - %s, rx_left: %d\n\n", ret, error_buf,
+            rx_left );
+		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
+            PROCESS_YIELD_UNTIL(rx_left);
 	}
     while( ret == MBEDTLS_ERR_SSL_WANT_READ ||
            ret == MBEDTLS_ERR_SSL_WANT_WRITE );
@@ -410,6 +406,8 @@ init:
      * 6. Write the echo request
      */
 send_request:
+    retry_left = 5;
+
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
@@ -417,8 +415,11 @@ send_request:
 
     do {
 		ret = mbedtls_ssl_write( &ssl, (unsigned char *) MESSAGE, len );
-		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
-			PROCESS_YIELD_UNTIL(rx_left);
+        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
+        mbedtls_printf( "Write error: %d - %s, rx_left: %d\n\n", ret, error_buf,
+            rx_left );
+        if (ret == MBEDTLS_ERR_SSL_WANT_READ)
+            PROCESS_YIELD_UNTIL(rx_left);
 	}
     while( ret == MBEDTLS_ERR_SSL_WANT_READ ||
            ret == MBEDTLS_ERR_SSL_WANT_WRITE );
@@ -443,8 +444,11 @@ send_request:
 
     do {
 		ret = mbedtls_ssl_read( &ssl, buf, len );
+        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
+        mbedtls_printf( "Read error: %d - %s, rx_left: %d\n\n", ret, error_buf,
+            rx_left );
 		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
-			PROCESS_YIELD_UNTIL(rx_left);
+            PROCESS_YIELD_UNTIL(rx_left);
 	}
     while( ret == MBEDTLS_ERR_SSL_WANT_READ ||
            ret == MBEDTLS_ERR_SSL_WANT_WRITE );
@@ -459,16 +463,15 @@ send_request:
                     goto send_request;
                     mbedtls_printf( " retry_left: %d\n", retry_left );
                 }
-                goto exit;
+                goto close_notify;
 
             case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
                 mbedtls_printf( " connection was closed gracefully\n" );
-                ret = 0;
                 goto close_notify;
 
             default:
                 mbedtls_printf( " mbedtls_ssl_read returned -0x%x\n\n", -ret );
-                goto exit;
+                goto close_notify;
         }
     }
     unsigned long elapsed_secs = clock_seconds() - start_time;
@@ -477,6 +480,8 @@ send_request:
     len = ret;
     mbedtls_printf( " %d bytes read\n\n%s\n\n", len, buf );
 
+    goto send_request;
+
     /*
      * 8. Done, cleanly close the connection
      */
@@ -484,11 +489,15 @@ close_notify:
     mbedtls_printf( "  . Closing the connection..." );
 
     /* No error checking, the connection might be closed already */
-    do ret = mbedtls_ssl_close_notify( &ssl );
-    while( ret == MBEDTLS_ERR_SSL_WANT_WRITE );
+    do {
+        ret = mbedtls_ssl_close_notify( &ssl );
+        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
+        mbedtls_printf( "Close notify error: %d - %s\n\n", ret, error_buf );
+    } while( ret == MBEDTLS_ERR_SSL_WANT_WRITE );
     ret = 0;
 
     mbedtls_printf( " done\n" );
+    goto handshake;
 
     /*
      * 9. Final clean-ups and exit
@@ -508,10 +517,6 @@ exit:
     mbedtls_ssl_config_free( &conf );
     mbedtls_ctr_drbg_free( &ctr_drbg );
     mbedtls_entropy_free( &entropy );
-
-    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
-    etimer_reset(&etimer);
-    goto init;
 
     /* Shell can not handle large exit numbers -> 1 for errors */
     if( ret < 0 )
