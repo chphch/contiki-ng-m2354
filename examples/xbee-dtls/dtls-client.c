@@ -41,6 +41,7 @@
 #define UDP_SERVER_PORT	5678
 
 #define RX_BUF_SIZE	4096
+#define ERROR_BUF_SIZE 100
 
 #define MESSAGE     "Echo this"
 
@@ -212,18 +213,25 @@ PROCESS_THREAD(udp_client_process, ev, data)
     static uint32_t flags;
 	static unsigned char buf[1024];
     static const char *pers = "dtls_client";
-	static int retry_left = 5;
+	static int retry_left;
 	static udp_timer_t timer;
+    static unsigned int num_sent = 0;
 
     static mbedtls_entropy_context entropy;
     static mbedtls_ctr_drbg_context ctr_drbg;
     static mbedtls_ssl_context ssl;
     static mbedtls_ssl_config conf;
     static mbedtls_x509_crt cacert;
+    static char error_buf[ERROR_BUF_SIZE];
 
     uip_ipaddr_t dest_ipaddr =  {{ 0xFE,0x80,0x00,0x00,0x00, 0x00,0x00,0x00,0x02,0x13,0xA2, 0x00, 0x41, 0xA5, 0x9A, 0x67}};
 
+    static struct etimer etimer;
+    static unsigned long start_time;
+
     PROCESS_BEGIN();
+    etimer_set(&etimer, CLOCK_SECOND * 1);
+    start_time = clock_seconds();
 
 #if defined(MBEDTLS_DEBUG_C)
 	//mbedtls_debug_set_threshold(3);
@@ -236,6 +244,8 @@ PROCESS_THREAD(udp_client_process, ev, data)
 	}
 
 init:
+    retry_left = 5;
+
     /*
      * 0. Initialize the RNG and the session data
      */
@@ -358,8 +368,11 @@ init:
 
     do {
 		ret = mbedtls_ssl_handshake( &ssl );
-		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
-			PROCESS_YIELD_UNTIL(rx_left);
+		if (ret == MBEDTLS_ERR_SSL_WANT_READ) {
+            PROCESS_YIELD_UNTIL(rx_left);
+        }
+        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
+        mbedtls_printf( "Handshake error: %d - %s\n\n", ret, error_buf );
 	}
     while( ret == MBEDTLS_ERR_SSL_WANT_READ ||
            ret == MBEDTLS_ERR_SSL_WANT_WRITE );
@@ -442,8 +455,10 @@ send_request:
         {
             case MBEDTLS_ERR_SSL_TIMEOUT:
                 mbedtls_printf( " timeout\n\n" );
-                if( retry_left-- > 0 )
+                if( retry_left-- > 0 ) {
                     goto send_request;
+                    mbedtls_printf( " retry_left: %d\n", retry_left );
+                }
                 goto exit;
 
             case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
@@ -456,6 +471,8 @@ send_request:
                 goto exit;
         }
     }
+    unsigned long elapsed_secs = clock_seconds() - start_time;
+    mbedtls_printf( " num_sent: %u, time: %lus\n", ++num_sent, elapsed_secs);
 
     len = ret;
     mbedtls_printf( " %d bytes read\n\n%s\n\n", len, buf );
@@ -481,7 +498,6 @@ exit:
 #ifdef MBEDTLS_ERROR_C
     if( ret != 0 )
     {
-        char error_buf[100];
         mbedtls_strerror( ret, error_buf, 100 );
         mbedtls_printf( "Last error was: %d - %s\n\n", ret, error_buf );
     }
@@ -493,7 +509,8 @@ exit:
     mbedtls_ctr_drbg_free( &ctr_drbg );
     mbedtls_entropy_free( &entropy );
 
-    fflush(stdout);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
+    etimer_reset(&etimer);
     goto init;
 
     /* Shell can not handle large exit numbers -> 1 for errors */
