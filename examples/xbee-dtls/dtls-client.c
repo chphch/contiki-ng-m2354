@@ -221,7 +221,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
     static mbedtls_ssl_config conf;
     static mbedtls_x509_crt cacert;
 
-    uip_ipaddr_t dest_ipaddr =  {{ 0xFE,0x80,0x00,0x00,0x00, 0x00,0x00,0x00,0x02,0x13,0xA2, 0x00, 0x42, 0x1C, 0x4A, 0xEA}};
+    uip_ipaddr_t dest_ipaddr =  {{ 0xFE,0x80,0x00,0x00,0x00, 0x00,0x00,0x00,0x02,0x13,0xA2, 0x00, 0x41, 0xA5, 0x9A, 0x67}};
 
     PROCESS_BEGIN();
 
@@ -235,6 +235,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
 		goto exit;
 	}
 
+init:
     /*
      * 0. Initialize the RNG and the session data
      */
@@ -491,6 +492,9 @@ exit:
     mbedtls_ssl_config_free( &conf );
     mbedtls_ctr_drbg_free( &ctr_drbg );
     mbedtls_entropy_free( &entropy );
+
+    fflush(stdout);
+    goto init;
 
     /* Shell can not handle large exit numbers -> 1 for errors */
     if( ret < 0 )

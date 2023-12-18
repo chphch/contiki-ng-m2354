@@ -1,4 +1,4 @@
-CONTIKI_PROJECT = dtls-server
+CONTIKI_PROJECT = dtls-client
 all: $(CONTIKI_PROJECT)
 
 CONTIKI=../..
