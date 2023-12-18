@@ -216,6 +216,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
 	static int retry_left;
 	static udp_timer_t timer;
     static unsigned int num_sent = 0;
+    static struct etimer etimer;
 
     static mbedtls_entropy_context entropy;
     static mbedtls_ctr_drbg_context ctr_drbg;
@@ -480,6 +481,8 @@ send_request:
     len = ret;
     mbedtls_printf( " %d bytes read\n\n%s\n\n", len, buf );
 
+    etimer_set(&etimer, 1 * CLOCK_SECOND);
+    PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
     goto send_request;
 
     /*
