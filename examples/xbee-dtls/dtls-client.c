@@ -42,10 +42,11 @@
 
 #define RX_BUF_SIZE	4096
 #define ERROR_BUF_SIZE 100
-#define WINDOW_SIZE 60
 
 extern float simulated_data[];
 extern int num_data;
+extern int window_size;
+extern int feature_size;
 
 static struct udp_socket udp_sock;
 static uint8_t *rx_buf = NULL;
@@ -213,13 +214,13 @@ PROCESS_THREAD(udp_client_process, ev, data)
 {
     static int ret = 0, len;
     static uint32_t flags;
-	static unsigned char buf[1024];
+	static unsigned char buf[16384];
     static unsigned char * buf_point = NULL;
     static const char *pers = "dtls_client";
 	static int retry_left = 5;
     static size_t write_left = 0;
 	static udp_timer_t timer;
-    static int data_index = 0;
+    static int window_index = 0;
     static struct etimer etimer;
 
     static mbedtls_entropy_context entropy;
@@ -410,8 +411,8 @@ send_request:
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
-    write_left = sizeof(float) * WINDOW_SIZE;
-    memcpy(buf, simulated_data + data_index, write_left);
+    write_left = sizeof(float) * window_size * feature_size;
+    memcpy(buf, simulated_data + window_index * window_size * feature_size, write_left);
     buf_point = buf;
 
     do {
@@ -435,7 +436,7 @@ send_request:
 
     len = ret;
     mbedtls_printf( " %d bytes written\n first value: %f, last value: %f\n",
-        len, (double)((float*) buf)[0], (double)((float*) buf)[WINDOW_SIZE - 1] );
+        len, (double)((float*) buf)[0], (double)((float*) buf)[window_size - 1] );
 
     /*
      * 7. Read the echo response
@@ -477,16 +478,17 @@ send_request:
         }
     }
     unsigned long elapsed_secs = clock_seconds() - start_time;
-    mbedtls_printf( " data_index: %u, time: %lus\n", data_index++, elapsed_secs);
+    mbedtls_printf( " window_index: %u, time: %lus\n", window_index, elapsed_secs);
+    window_index += 1;
 
     len = ret;
     mbedtls_printf( " %d bytes read\n first value: %f, last value: %f\n",
-        len, (double)((float*) buf)[0], (double)((float*) buf)[WINDOW_SIZE - 1] );
+        len, (double)((float*) buf)[0], (double)((float*) buf)[window_size - 1] );
 
     etimer_set(&etimer, 1 * CLOCK_SECOND);
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
 
-    if (data_index == num_data) goto close_notify;
+    if (window_index > 20) goto close_notify;
     else {
         retry_left = 5;
         goto send_request;
