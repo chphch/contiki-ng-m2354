@@ -3,7 +3,7 @@ all: $(CONTIKI_PROJECT)
 
 CONTIKI=../..
 
-PROJECT_SOURCEFILES += slip-net.c
+PROJECT_SOURCEFILES += slip-net.c data.c
 
 CFLAGS += -DMBEDTLS_CONFIG_FILE='<mbedtls_config.h>'
 

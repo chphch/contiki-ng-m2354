@@ -5,6 +5,7 @@ taskkill.exe /FI "WINDOWTITLE eq "COM$COMPORT" - Tera Term VT"
 set -e
 make TARGET=m2354 BOARD=ASM2 NS=1
 
+pkill -9 axtool.exe || true
 ~/spuos/dist/axtool.exe -t nu_maker -f2 build/m2354/ASM2/dtls-client.bin "COM$COMPORT" &
 sleep 1
 NuLink.exe -reset

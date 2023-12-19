@@ -42,12 +42,10 @@
 
 #define RX_BUF_SIZE	4096
 #define ERROR_BUF_SIZE 100
+#define WINDOW_SIZE 60
 
-static const char * simulated_data[] = {
-    "0,1,2",
-    "2,3,4",
-};
-static int data_size = sizeof(simulated_data) / sizeof(simulated_data[0]);
+extern float simulated_data[];
+extern int num_data;
 
 static struct udp_socket udp_sock;
 static uint8_t *rx_buf = NULL;
@@ -219,7 +217,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
     static const char *pers = "dtls_client";
 	static int retry_left;
 	static udp_timer_t timer;
-    static unsigned int data_index = 0;
+    static int data_index = 0;
     static struct etimer etimer;
 
     static mbedtls_entropy_context entropy;
@@ -415,10 +413,11 @@ send_request:
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
-    strcpy((char *) buf, simulated_data[data_index]);
+    memcpy(buf, simulated_data + data_index, sizeof(float) * WINDOW_SIZE);
+    buf[sizeof(float) * WINDOW_SIZE] = '\0';
 
     do {
-		ret = mbedtls_ssl_write( &ssl, (unsigned char *) buf, strlen((char *) buf) );
+		ret = mbedtls_ssl_write( &ssl, buf, strlen((char *) buf) );
         mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
         mbedtls_printf( "Write error: %d - %s, rx_left: %d\n\n", ret, error_buf,
             rx_left );
@@ -435,7 +434,8 @@ send_request:
     }
 
     len = ret;
-    mbedtls_printf( " %d bytes written\n\n%s\n\n", len, buf );
+    mbedtls_printf( " %d bytes written\n first value: %f, last value: %f\n",
+        len, (double)((float*) buf)[0], (double)((float*) buf)[WINDOW_SIZE - 1] );
 
     /*
      * 7. Read the echo response
@@ -482,12 +482,13 @@ send_request:
     mbedtls_printf( " data_index: %u, time: %lus\n", data_index++, elapsed_secs);
 
     len = ret;
-    mbedtls_printf( " %d bytes read\n\n%s\n\n", len, buf );
+    mbedtls_printf( " %d bytes read\n first value: %f, last value: %f\n",
+        len, (double)((float*) buf)[0], (double)((float*) buf)[WINDOW_SIZE - 1] );
 
     etimer_set(&etimer, 1 * CLOCK_SECOND);
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
 
-    if (data_index == data_size) goto close_notify;
+    if (data_index == num_data) goto close_notify;
     else goto send_request;
 
     /*
@@ -514,7 +515,7 @@ exit:
 #ifdef MBEDTLS_ERROR_C
     if( ret != 0 )
     {
-        mbedtls_strerror( ret, error_buf, 100 );
+        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
         mbedtls_printf( "Last error was: %d - %s\n\n", ret, error_buf );
     }
 #endif
