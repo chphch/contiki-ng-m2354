@@ -411,8 +411,8 @@ send_request:
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
-    write_left = sizeof(float) * window_size * feature_size;
-    memcpy(buf, simulated_data + window_index * window_size * feature_size, write_left);
+    write_left = sizeof(float) * (window_size * feature_size + 1);
+    memcpy(buf, simulated_data + window_index * (window_size * feature_size + 1), write_left);
     buf_point = buf;
 
     do {
@@ -436,7 +436,7 @@ send_request:
 
     len = ret;
     mbedtls_printf( " %d bytes written\n first value: %f, last value: %f\n",
-        len, (double)((float*) buf)[0], (double)((float*) buf)[window_size - 1] );
+        len, (double)(((float*) buf)[0]), (double)(((float*) buf)[window_size - 1]) );
 
     /*
      * 7. Read the echo response
@@ -482,13 +482,13 @@ send_request:
     window_index += 1;
 
     len = ret;
-    mbedtls_printf( " %d bytes read\n first value: %f, last value: %f\n",
-        len, (double)((float*) buf)[0], (double)((float*) buf)[window_size - 1] );
+    buf[len] = '\0';
+    mbedtls_printf( " %d bytes read: %s\n", len, buf);
 
     etimer_set(&etimer, 1 * CLOCK_SECOND);
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
 
-    if (window_index > 20) goto close_notify;
+    if (window_index == 12) goto close_notify;
     else {
         retry_left = 5;
         goto send_request;
