@@ -214,8 +214,10 @@ PROCESS_THREAD(udp_client_process, ev, data)
     static int ret = 0, len;
     static uint32_t flags;
 	static unsigned char buf[1024];
+    static unsigned char * buf_point = NULL;
     static const char *pers = "dtls_client";
-	static int retry_left;
+	static int retry_left = 5;
+    static size_t write_left = 0;
 	static udp_timer_t timer;
     static int data_index = 0;
     static struct etimer etimer;
@@ -366,9 +368,6 @@ PROCESS_THREAD(udp_client_process, ev, data)
 
     do {
 		ret = mbedtls_ssl_handshake( &ssl );
-        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
-        mbedtls_printf( "Handshake error: %d - %s, rx_left: %d\n\n", ret, error_buf,
-            rx_left );
 		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
             PROCESS_YIELD_UNTIL(rx_left);
 	}
@@ -408,24 +407,25 @@ PROCESS_THREAD(udp_client_process, ev, data)
      * 6. Write the echo request
      */
 send_request:
-    retry_left = 5;
-
     mbedtls_printf( "  > Write to server:" );
     fflush( stdout );
 
-    memcpy(buf, simulated_data + data_index, sizeof(float) * WINDOW_SIZE);
-    buf[sizeof(float) * WINDOW_SIZE] = '\0';
+    write_left = sizeof(float) * WINDOW_SIZE;
+    memcpy(buf, simulated_data + data_index, write_left);
+    buf_point = buf;
 
     do {
-		ret = mbedtls_ssl_write( &ssl, buf, strlen((char *) buf) );
-        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
-        mbedtls_printf( "Write error: %d - %s, rx_left: %d\n\n", ret, error_buf,
-            rx_left );
+		ret = mbedtls_ssl_write( &ssl, buf_point, write_left );
+        if (ret > 0) {
+            buf_point += ret;
+            write_left -= ret;
+        }
         if (ret == MBEDTLS_ERR_SSL_WANT_READ)
             PROCESS_YIELD_UNTIL(rx_left);
 	}
     while( ret == MBEDTLS_ERR_SSL_WANT_READ ||
-           ret == MBEDTLS_ERR_SSL_WANT_WRITE );
+           ret == MBEDTLS_ERR_SSL_WANT_WRITE ||
+           write_left > 0 );
 
     if( ret < 0 )
     {
@@ -448,9 +448,6 @@ send_request:
 
     do {
 		ret = mbedtls_ssl_read( &ssl, buf, len );
-        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
-        mbedtls_printf( "Read error: %d - %s, rx_left: %d\n\n", ret, error_buf,
-            rx_left );
 		if (ret == MBEDTLS_ERR_SSL_WANT_READ)
             PROCESS_YIELD_UNTIL(rx_left);
 	}
@@ -471,11 +468,12 @@ send_request:
 
             case MBEDTLS_ERR_SSL_PEER_CLOSE_NOTIFY:
                 mbedtls_printf( " connection was closed gracefully\n" );
+                ret = 0;
                 goto close_notify;
 
             default:
                 mbedtls_printf( " mbedtls_ssl_read returned -0x%x\n\n", -ret );
-                goto close_notify;
+                goto exit;
         }
     }
     unsigned long elapsed_secs = clock_seconds() - start_time;
@@ -489,7 +487,10 @@ send_request:
     PROCESS_WAIT_EVENT_UNTIL(etimer_expired(&etimer));
 
     if (data_index == num_data) goto close_notify;
-    else goto send_request;
+    else {
+        retry_left = 5;
+        goto send_request;
+    }
 
     /*
      * 8. Done, cleanly close the connection
@@ -498,11 +499,9 @@ close_notify:
     mbedtls_printf( "  . Closing the connection..." );
 
     /* No error checking, the connection might be closed already */
-    do {
-        ret = mbedtls_ssl_close_notify( &ssl );
-        mbedtls_strerror( ret, error_buf, ERROR_BUF_SIZE );
-        mbedtls_printf( "Close notify error: %d - %s\n\n", ret, error_buf );
-    } while( ret == MBEDTLS_ERR_SSL_WANT_WRITE );
+    do ret = mbedtls_ssl_close_notify( &ssl );
+    while( ret == MBEDTLS_ERR_SSL_WANT_WRITE ||
+           ret == MBEDTLS_ERR_SSL_WANT_READ );
     ret = 0;
 
     mbedtls_printf( " done\n" );
