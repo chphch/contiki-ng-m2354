@@ -222,6 +222,7 @@ PROCESS_THREAD(udp_client_process, ev, data)
 	static udp_timer_t timer;
     static int window_index = 0;
     static struct etimer etimer;
+    static size_t total_byte_sent = 0;
 
     static mbedtls_entropy_context entropy;
     static mbedtls_ctr_drbg_context ctr_drbg;
@@ -435,6 +436,7 @@ send_request:
     }
 
     len = ret;
+    total_byte_sent += len;
     mbedtls_printf( " %d bytes written\n first value: %f, last value: %f\n",
         len, (double)(((float*) buf)[0]), (double)(((float*) buf)[window_size - 1]) );
 
@@ -507,6 +509,8 @@ close_notify:
     ret = 0;
 
     mbedtls_printf( " done\n" );
+
+    mbedtls_printf( "  . Total bytes sent: %u\n", total_byte_sent);
 
     /*
      * 9. Final clean-ups and exit
